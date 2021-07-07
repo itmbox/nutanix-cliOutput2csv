@@ -1,16 +1,12 @@
 """
-
 Nutanix 로그 파일로 csv 생성
 사용예: c:\> py   nclihostls2csv.py   putty.log
-
 수집 내용
 1. ncli host ls
 2. allssh 'sleep 2 ; ncc hardware_info show_hardware_info'
-
  ncli host ls : 호스트 정보 수집
  ncc hardware_info show_hardware_info : cpu, mem, disk, 클러스터 명, aos, ahv, ncc, bmc, bios 수집
 (ncc: show_hardware_info에 포함되므로 생략가능. 클러스터 명, aos, ahv, ncc, bmc, bios 수집)
-
 """
 from dataclasses import dataclass
 #-*- coding:utf-8 -*-
@@ -24,6 +20,7 @@ DELIMITER_HARDWARE_INFO="+-"
 Lines=""
 StartSeekLocation=0
 EndSeekLocation=0
+EndNodeInfoLocation=0
 NodesInfo=[]
 ClusterName= ""
 
@@ -92,7 +89,7 @@ gotoPosition(key)
     -또한 SeekLocation 정수값을 리턴함.
     -못찾으면 -1을 리턴함 
 """
-def gotoPosition(key):
+def gotoFulltextfinder(key):
     global Lines, EndSeekLocation, StartSeekLocation
     #print("gotoPosition(",key,")start SeekLocation=", StartSeekLocation, "     EndLocation=", EndSeekLocation)
     for i in range(StartSeekLocation, len(Lines)):
@@ -102,7 +99,16 @@ def gotoPosition(key):
             return i
     return -1
 
-
+def gotoNodeInfofinder(key):
+    global Lines, EndSeekLocation, StartSeekLocation,EndNodeInfoLocation
+    #print("gotoPosition(",key,")start SeekLocation=", StartSeekLocation, "     EndLocation=", EndSeekLocation)
+    setNodeInfoEndLocation()
+    for i in range(StartSeekLocation, EndNodeInfoLocation):
+        if Lines[i].find(key)>=0:
+            StartSeekLocation=i
+            #print("gotoPosition(",key,") Founded SeekLocation=", i)
+            return i
+    return -1
 
 """
 getVal(word)
@@ -138,7 +144,7 @@ def getVal(key):
 cli 커맨드의 결과가 끝나서 프롬프트 $로 나왔는지 확인하기 위한 목적
 cli 결과를 while 루프 돌릴 때 사용 
 """
-def setEndSeekLocationUntilDollor():
+def setSeekEndLocationUntilDollor():
     global Lines, EndSeekLocation, StartSeekLocation
     for i in range(StartSeekLocation+1, len(Lines)):
         if Lines[i].find('$')>=0:
@@ -146,7 +152,23 @@ def setEndSeekLocationUntilDollor():
             print("find range = ",StartSeekLocation," ~ ", EndSeekLocation)
             break
 
+def setNodeInfoEndLocation():
+    global EndNodeInfoLocation, StartSeekLocation, Lines
+    for i in range(StartSeekLocation, len(Lines)):
+        if Lines[i].find('INFO: Hardware Info log file can be found at') >=0:
+            EndNodeInfoLocation = i
+            return EndNodeInfoLocation
 
+def setComponentNodeInfoEndLocation():
+    global  Lines, EndSeekLocation, StartSeekLocation, NodesInfo
+
+    for i in range(StartSeekLocation+2, len(Lines)):
+        if Lines[i].find('+-') >= 0 or Lines[i].find('|') >= 0:
+            continue
+        else:
+            EndSeekLocation=i-1
+            print("find range = ",StartSeekLocation," ~ ",EndSeekLocation)
+            break
 
 def saveCsv(filename,listdictVar):
     try :
@@ -192,7 +214,6 @@ def showcsv(filename):
         print(line,end="")
     f.close()
 """
-
 """
 def ncliruls():
     print("test")
@@ -204,7 +225,7 @@ def ncliclusterinfo():
     global Lines, EndSeekLocation, StartSeekLocation, NodesInfo, ClusterName,Vip,ScsiIp
     print("call ncliclusterinfo()")
     StartSeekLocation=0
-    if gotoPosition("ncli cluster info")>=0:
+    if gotoFulltextfinder("ncli cluster info") >=0:
         ClusterName=getVal("Cluster Name")
         Vip = getVal("External IP address")
         ScsiIp = getVal("External Data Services")
@@ -217,8 +238,8 @@ host list로 Dictionary List를 생성함.
 def nclihostls():
     global Lines, EndSeekLocation, StartSeekLocation, NodesInfo,ClusterName
     StartSeekLocation=0
-    if gotoPosition("ncli host ls")>=0:
-        setEndSeekLocationUntilDollor()
+    if gotoFulltextfinder("ncli host ls") >=0:
+        setSeekEndLocationUntilDollor()
         while StartSeekLocation<=EndSeekLocation:
             # 옛날 ncli host ls는 ID로 표시됨, 요즘엔 Id로 표시됨.
             print ("ncli host ls lines = ", StartSeekLocation)
@@ -261,24 +282,25 @@ def showhardwareinfo():
     global Lines, EndSeekLocation, StartSeekLocation, NodesInfo,cvmIps
     StartSeekLocation=0
     EndSeekLocation=len(Lines)
+    startReg = re.compile('.*Node [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:')
     print("showhardwareinfo() start")
-    if gotoPosition("show_hardware_info") >= 0:
-        while StartSeekLocation<=len(Lines):
-            if gotoPosition("Detailed") >= 0:
+
+    if gotoFulltextfinder("show_hardware_info") >= 0:
+        while StartSeekLocation < len(Lines):
+            if startReg.match(Lines[StartSeekLocation]) != None:
                 #print("showhardwareinfo()found cvmips : ",Lines[StartSeekLocation+1])
-                gotoPosition("Node")
                 cvmIps = Lines[StartSeekLocation].split()[1]
                 cvmIps = regIp(cvmIps)
-                StartSeekLocation = StartSeekLocation + 1
+                setNodeInfoEndLocation()
 
-                gotoPosition("Node Module")
-                setEndSeekLocationForShowhardware()
+                gotoFulltextfinder("Node Module")
+                setComponentNodeInfoEndLocation()
                 fru=getVal("Product name")
-                gotoPosition("BIOS Information")
-                setEndSeekLocationForShowhardware()
+                gotoFulltextfinder("BIOS Information")
+                setComponentNodeInfoEndLocation()
                 bios=getVal("Version")
-                gotoPosition("BMC")
-                setEndSeekLocationForShowhardware()
+                gotoFulltextfinder("BMC")
+                setComponentNodeInfoEndLocation()
                 bmc=getVal("Firmware revision")
 
 
@@ -308,35 +330,26 @@ def showhardwareinfo():
                 updateNodesInfo(cvmIps, {"SSD spec": ssdInfo["SSD spec"]})
                 updateNodesInfo(cvmIps, {"HDD spec": hddInfo["HDD spec"]})
                 updateNodesInfo(cvmIps, {"SATADOM spec": satadomInfo["SATADOM spec"]})
-            #elif :
-            #    print("showhardwareinfo break.")
-            #    break
-            StartSeekLocation += 1
+            #elif Lines[StartSeekLocation].find('$'):
+                #Hardware INFO End statement
+                #break
+            StartSeekLocation+=1
 
 
-def setEndSeekLocationForShowhardware():
-    global  Lines, EndSeekLocation, StartSeekLocation, NodesInfo
 
-    for i in range(StartSeekLocation+2, len(Lines)):
-        if Lines[i].find('+-') >= 0 or Lines[i].find('|') >= 0:
-            continue
-        else:
-            EndSeekLocation=i-1
-            print("find range = ",StartSeekLocation," ~ ",EndSeekLocation)
-            break
 
 
 def showhardwareCpu():
     global Lines, EndSeekLocation, StartSeekLocation, NodesInfo,cvmIps
-    gotoPosition("Processor Information")
+    gotoFulltextfinder("Processor Information")
     print("Processor Information found StartSeekLocation =", StartSeekLocation)
-    setEndSeekLocationForShowhardware()
+    setComponentNodeInfoEndLocation()
 
     corePerCpu = getVal("Core enabled")
     cpumodel = getVal("Version")
     cpunum = 1
 
-    for StartSeekLocation in range(StartSeekLocation, EndSeekLocation - 1):
+    for StartSeekLocation in range(StartSeekLocation, EndNodeInfoLocation - 1):
         if Lines[StartSeekLocation].find("Memory") >= 0:
             print("Memory met : ",StartSeekLocation)
             break
@@ -349,9 +362,9 @@ def showhardwareDimm():
     totalDimmSize = 0
     dimmspec=[]
 
-    gotoPosition("Memory Module")
+    gotoFulltextfinder("Memory Module")
     print("showhardwareDimm start at StartSeekLocation=", StartSeekLocation)
-    setEndSeekLocationForShowhardware()
+    setComponentNodeInfoEndLocation()
     while StartSeekLocation<EndSeekLocation:
 
         dimmLoc = getVal("Location")
@@ -382,8 +395,7 @@ def showhardwareDimm():
             print("TOT DIMM=",totalDimmSize)
             dimmspec.append(str(foundeddimm))
 
-
-        gotoPosition(DELIMITER_HARDWARE_INFO)
+        gotoFulltextfinder(DELIMITER_HARDWARE_INFO)
 
     print("END of showhardwareDimm")
     return {"Dimm spec":dimmspec,"Total MEM Size":totalDimmSize}
@@ -394,31 +406,34 @@ def showhardwareSatadom():
 
 
     # 옛날 ncc는 SATADOM이 없음
-    if gotoPosition("SATADOM")>=0:
-        print("SATADOM start at StartSeekLocation=", StartSeekLocation)
-        setEndSeekLocationForShowhardware()
+    tmp = StartSeekLocation
+    if gotoNodeInfofinder("SATADOM") >0:
+
+        setComponentNodeInfoEndLocation()
+        print("SATADOM start at StartSeekLocation=", StartSeekLocation, EndSeekLocation)
         while StartSeekLocation<EndSeekLocation:
             satadomCap=getVal("Capacity")
             satadomModel=getVal("Device model")
             satadomSn=getVal("Serial number")
             satadomSpec.append(satadomCap+':'+satadomModel+"("+satadomSn+")")
             #print(StartSeekLocation)
-            gotoPosition(DELIMITER_HARDWARE_INFO)
+            gotoFulltextfinder(DELIMITER_HARDWARE_INFO)
         #print("SATADOM spec     ", {"SATADOM spec":satadomSpec})
-    elif gotoPosition("Host Boot RAID Disks") >=0:
-        print("Host Boot RAID Disks start at StartSeekLocation=", StartSeekLocation)
-        setEndSeekLocationForShowhardware()
+    elif gotoNodeInfofinder("Host Boot RAID Disks") >=0:
+        setComponentNodeInfoEndLocation()
+        print("Host Boot RAID Disks start at StartSeekLocation=", StartSeekLocation, EndSeekLocation)
         while StartSeekLocation<EndSeekLocation:
             #satadomCap = getVal("Capacity")
             satadomModel = getVal("Model")
             satadomSn = getVal("Serial number")
             satadomSpec.append(satadomCap+':'+satadomModel+"("+satadomSn+")")
             # print(StartSeekLocation)
-            gotoPosition(DELIMITER_HARDWARE_INFO)
+            gotoNodeInfofinder(DELIMITER_HARDWARE_INFO)
     else:
         #allflash model의 경우 Hypervisor Disk True가 m.2
-        tmp=gotoPosition("SSD")
-        setEndSeekLocationForShowhardware()
+        tmp=gotoNodeInfofinder("SSD")
+        setComponentNodeInfoEndLocation()
+        print("NVME start at StartSeekLocation=", StartSeekLocation, EndSeekLocation)
         while StartSeekLocation<EndSeekLocation:
             #print(Lines[StartSeekLocation])
             satadomCap = getVal("Capacity")
@@ -428,7 +443,7 @@ def showhardwareSatadom():
             if hypervisorDisk=="True":
                 satadomSpec.append(satadomCap+':'+satadomModel+"("+satadomSn+")")
 
-            gotoPosition(DELIMITER_HARDWARE_INFO)
+            gotoNodeInfofinder(DELIMITER_HARDWARE_INFO)
         StartSeekLocation=tmp
 
     print("END of showhardwareSatadom", satadomSpec)
@@ -441,9 +456,9 @@ def showhardwareSsd():
     totalSsdSize=0
     diskqty=0
     diskCap=""
-    gotoPosition("SSD")
+    gotoFulltextfinder("SSD")
     print("showhardwareSsd start at StartSeekLocation=", StartSeekLocation)
-    setEndSeekLocationForShowhardware()
+    setComponentNodeInfoEndLocation()
 
     while  StartSeekLocation<EndSeekLocation:
         loc=getVal("Location")
@@ -475,15 +490,15 @@ def showhardwareSsd():
     return {"SSD spec": ssdSpec,"Total SSD size":totalSsdSize,"size/SSD":diskCap,"SSD qty":diskqty}
 
 def showhardwareHdd():
-    global Lines, EndSeekLocation, StartSeekLocation, NodesInfo,cvmIps
+    global Lines, EndSeekLocation, StartSeekLocation, NodesInfo
 
     hddSpec=[]
     totalHddSize=0
 
 
-    if gotoPosition("HDD")>=0:
+    if gotoNodeInfofinder("HDD") >=0:
         print("showhardwareHdd start at StartSeekLocation=", StartSeekLocation)
-        setEndSeekLocationForShowhardware()
+        setComponentNodeInfoEndLocation()
         while StartSeekLocation<EndSeekLocation:
             loc= getVal('Location')
             hddCap = getVal("Capacity")
@@ -493,7 +508,7 @@ def showhardwareHdd():
             foundedhdd = loc + ':' + hddCap + ':' + hddModel + '(' + hddSn + ')'
             hddSpec.append(foundedhdd)
             #print(StartSeekLocation)
-            gotoPosition(DELIMITER_HARDWARE_INFO)
+            gotoNodeInfofinder(DELIMITER_HARDWARE_INFO)
         #print("HDD spec     ", {"HDD spec": hddSpec,"Total SSD size":totalHddSize})
         return {"HDD spec": hddSpec,"Total HDD size":totalHddSize}
     else:
@@ -508,7 +523,7 @@ def ncc():
     EndSeekLocation=len(Lines)
 
     ncc=getVal("ncc_version")
-    setEndSeekLocationUntilDollor()
+    setSeekEndLocationUntilDollor()
     print("founded ncc_version loc=",StartSeekLocation, ", ",ncc)
     if ncc != "":
 
@@ -525,17 +540,15 @@ def ncc():
 def regIp(ip):
     #regex=re.compile('[0-9]+.[0-9]+.[0-9]+.[0-9]+')
     regex = '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
-    print("before reg ip = ",ip)
+
     ip=re.search(regex,ip).group()
     print ("after reg ip = ",ip)
     return ip
 
 """
-
 MAIN
 nclihostls()가 가장 우선 실행되어야, 노드의 리스트가 만들어지고
 나머지 함수는 만들어진 노드 리스트에 업데이트함.
-
 """
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
