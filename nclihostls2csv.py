@@ -155,7 +155,7 @@ def setSeekEndLocationUntilDollor():
 def setNodeInfoEndLocation():
     global EndNodeInfoLocation, StartSeekLocation, Lines
     for i in range(StartSeekLocation, len(Lines)):
-        if Lines[i].find('INFO: Hardware Info log file can be found at') >=0:
+        if Lines[i].find('Hardware Info log file can be found at') >=0:
             EndNodeInfoLocation = i
             return EndNodeInfoLocation
 
@@ -282,12 +282,13 @@ def showhardwareinfo():
     global Lines, EndSeekLocation, StartSeekLocation, NodesInfo,cvmIps
     StartSeekLocation=0
     EndSeekLocation=len(Lines)
-    startReg = re.compile('.*Node [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:')
+    regNodeIp = re.compile('.*Node .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+.*:.*')
     print("showhardwareinfo() start")
 
     if gotoFulltextfinder("show_hardware_info") >= 0:
+        print("show_hardware_info founded ",StartSeekLocation)
         while StartSeekLocation < len(Lines):
-            if startReg.match(Lines[StartSeekLocation]) != None:
+            if regNodeIp.match(Lines[StartSeekLocation]) != None:
                 #print("showhardwareinfo()found cvmips : ",Lines[StartSeekLocation+1])
                 cvmIps = Lines[StartSeekLocation].split()[1]
                 cvmIps = regIp(cvmIps)
